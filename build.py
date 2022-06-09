@@ -16,14 +16,17 @@ default_task = ["clean", "install_dependencies", "analyze", "publish"]
 name = 'databricks-pybuilder-plugin'
 summary = 'Pybuilder plugin providing tasks for assets deployment.'
 description = 'Provides utilities for assets deployment to Databricks based on databricks API.'
-authors = [Author('Mikhail Kavaliou', 'mkavaliou@edmunds.com')]
-version = '0.0.1'
+authors = [Author('Mikhail Kavaliou', 'killswitch@tut.by')]
+version = '0.0.3.dev'
 
 
 @init
 def initialize(project):
     """Build setting"""
     project.set_property('distutils_commands', ['sdist', 'bdist_egg', 'bdist_wheel'])
+    project.set_property('distutils_classifiers', ['Development Status :: 5 - Production/Stable'])
+    project.set_property('distutils_readme_description', True)
+    project.set_property('distutils_description_overwrite', True)
     project.set_property('source_dist_ignore_patterns', ['*.pyc', '.hg*', '.svn', '.CVS', '__pycache__'])
     """Test settings"""
     """Setup unit test: set pyspark dependency through py.test, pytest.ini.  disable default unittest plugin run"""

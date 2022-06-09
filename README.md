@@ -110,7 +110,7 @@ Usage example:
 
 2. Deploy all the assets using the command `pyb deploy_to_cluster`.
 
-3. Get to the target folder in the Databricks seo workspace.
+3. Get to the target folder in the Databricks workspace.
 
 4. Attach the notebook to a cluster and run the script.
 

@@ -335,8 +335,15 @@ def deploy_job(project, logger):
 
     jobs_client = JobsApi(db_client)
 
+    deploy_single_job = project.get_property('deploy_single_job')
+    if deploy_single_job:
+        logger.info(f'Deploying a single job: {deploy_single_job}...')
+
     for job_definition in job_definitions_json:
         job_name = job_definition.get('name')
+        if deploy_single_job and deploy_single_job != job_name:
+            logger.info(f'Skipping the job deployment: {job_name}...')
+            continue
 
         logger.info(f'Looking for the job: "{job_name}"...')
         databricks_host = databricks_credentials.get('host')

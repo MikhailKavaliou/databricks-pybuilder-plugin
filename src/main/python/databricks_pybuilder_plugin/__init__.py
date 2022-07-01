@@ -57,14 +57,18 @@ def export_workspace(project, logger):
     if project.get_property('remote_workspace_path') is None:
         raise Exception('The "remote_workspace_path" property is not set...\n')
 
-    remote_workspace_path = project.get_property('remote_workspace_path').format(env=env)
+    remote_workspace_path = project.get_property('remote_workspace_path')
 
     if project.get_property('include_git_branch_into_output_workspace_path', False):
         assert_can_execute(["git", "--version"], prerequisite="git is installed.",
                            caller="databricks-pybuilder-plugin", env=None)
 
         branch = project.get_property('branch', get_active_branch_name())
-        remote_workspace_path += '/' + branch
+        remote_workspace_path = remote_workspace_path.replace('/{branch}', '') + '/' + branch
+    else:
+        branch = project.get_property('branch')
+
+    remote_workspace_path = remote_workspace_path.format(env=env, branch=branch).replace('/None', '')
 
     project_workspace_path = project.get_property('project_workspace_path')
 
@@ -294,6 +298,10 @@ def deploy_job(project, logger):
     if project.get_property('include_git_branch_into_output_workspace_path', False):
         assert_can_execute(["git", "--version"], prerequisite="git is installed.",
                            caller="databricks-pybuilder-plugin", env=None)
+        git_branch = get_active_branch_name()
+    else:
+        logger.info('Git branch name is disabled.')
+        git_branch = None
 
     default_env = project.get_property('default_environment')
     env = project.get_property('env', default_env).lower()
@@ -309,9 +317,9 @@ def deploy_job(project, logger):
                                             project.expand_path('$dir_dist'),
                                             logger) if env in project.get_property('attachable_lib_envs') else None
 
-    branch = project.get_property('branch', get_active_branch_name())
     job_definition_path = project.expand_path(project.get_property('job_definition_path'))
 
+    branch = project.get_property('branch', git_branch)
     rendering_args = {'env': env, 'branch': branch, 'dbfs_archive_path': dbfs_archive_path}
     extra_rendering_args = project.get_property('extra_rendering_args')
     if extra_rendering_args is not None and type(extra_rendering_args) == dict:
@@ -319,27 +327,29 @@ def deploy_job(project, logger):
     else:
         logger.info('No extra arguments for the job definition found.')
 
-    job_definition = _read_job_definition(job_definition_path, rendering_args)
+    job_definitions = _read_job_definition(job_definition_path, rendering_args)
+    job_definitions_json = json.loads(job_definitions)
+    # wrap a single definition into a list for multiple definitions support
+    if type(job_definitions_json) == dict:
+        job_definitions_json = [job_definitions_json]
 
     jobs_client = JobsApi(db_client)
 
-    job_name_value = project.get_property('job_name')
-    if job_name_value is None or job_name_value == '':
-        raise Exception('Please specify a "job_name" property to deploy a job under the name.')
-    job_name = project.get_property('job_name').format(env=env)
+    for job_definition in job_definitions_json:
+        job_name = job_definition.get('name')
 
-    logger.info(f'Looking for the job: "{job_name}"...')
-    databricks_host = databricks_credentials.get('host')
-    job_id = _get_job_id_by_name(jobs_client, job_name, databricks_host)
-    logger.info(f'Found the job: {databricks_host}/#job/{job_id}')
+        logger.info(f'Looking for the job: "{job_name}"...')
+        databricks_host = databricks_credentials.get('host')
+        job_id = _get_job_id_by_name(jobs_client, job_name, databricks_host)
+        logger.info(f'Found the job: {databricks_host}/#job/{job_id}')
 
-    new_job_definition = {
-        'job_id': job_id,
-        'new_settings': json.loads(job_definition)
-    }
-    jobs_client.reset_job(new_job_definition)
+        new_job_definition = {
+            'job_id': job_id,
+            'new_settings': job_definition
+        }
+        jobs_client.reset_job(new_job_definition)
 
-    logger.info(f'The job "{job_name}" has been updated.')
+        logger.info(f'The job "{job_name}" has been updated.')
 
 
 def _read_job_definition(job_definition_path, rendering_args):

@@ -54,22 +54,7 @@ def export_workspace(project, logger):
     env = project.get_property('env', default_env).lower()
     logger.info(f'\nExporting the workspace to {env.upper()}...\n')
 
-    if project.get_property('remote_workspace_path') is None:
-        raise Exception('The "remote_workspace_path" property is not set...\n')
-
-    remote_workspace_path = project.get_property('remote_workspace_path')
-
-    if project.get_property('include_git_branch_into_output_workspace_path', False):
-        assert_can_execute(["git", "--version"], prerequisite="git is installed.",
-                           caller="databricks-pybuilder-plugin", env=None)
-
-        branch = project.get_property('branch', get_active_branch_name())
-        remote_workspace_path = remote_workspace_path.replace('/{branch}', '') + '/' + branch
-    else:
-        branch = project.get_property('branch')
-
-    remote_workspace_path = remote_workspace_path.format(env=env, branch=branch).replace('/None', '')
-
+    remote_workspace_path = _build_remote_workspace_path(project, env)
     project_workspace_path = project.get_property('project_workspace_path')
 
     workspace_client = WorkspaceApi(_get_databricks_client(project.get_property('databricks_credentials').get(env)))
@@ -88,6 +73,23 @@ def export_workspace(project, logger):
         _upload_workspace_file(workspace_client, full_project_config_path, full_remote_config_path, logger)
 
     logger.info('\nThe workspace has been exported.\n')
+
+
+def _build_remote_workspace_path(project, env):
+    remote_workspace_path = project.get_property('remote_workspace_path')
+    if remote_workspace_path is None:
+        raise Exception('The "remote_workspace_path" property is not set...\n')
+
+    if project.get_property('include_git_branch_into_output_workspace_path', False):
+        assert_can_execute(["git", "--version"], prerequisite="git is installed.",
+                           caller="databricks-pybuilder-plugin", env=None)
+
+        branch = project.get_property('branch', get_active_branch_name())
+        remote_workspace_path = remote_workspace_path.replace('/{branch}', '') + '/' + branch
+    else:
+        branch = project.get_property('branch')
+
+    return remote_workspace_path.format(env=env, branch=branch).replace('/None', '')
 
 
 def _upload_workspace_files(client, project_workspace_path, remote_workspace_path, logger):
@@ -320,7 +322,8 @@ def deploy_job(project, logger):
     job_definition_path = project.expand_path(project.get_property('job_definition_path'))
 
     branch = project.get_property('branch', git_branch)
-    rendering_args = {'env': env, 'branch': branch, 'dbfs_archive_path': dbfs_archive_path}
+    rendering_args = {'env': env, 'branch': branch, 'dbfs_archive_path': dbfs_archive_path,
+                      'remote_workspace_path': _build_remote_workspace_path(project, env)}
     extra_rendering_args = project.get_property('extra_rendering_args')
     if extra_rendering_args is not None and type(extra_rendering_args) == dict:
         rendering_args.update(extra_rendering_args)

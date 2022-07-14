@@ -17,11 +17,13 @@ name = 'databricks-pybuilder-plugin'
 summary = 'Pybuilder plugin providing tasks for assets deployment.'
 description = 'Provides utilities for assets deployment to Databricks based on databricks API.'
 authors = [Author('Mikhail Kavaliou', 'killswitch@tut.by')]
-version = '0.0.6.dev'
+version = '0.0.7.dev'
 
 
 @init
 def initialize(project):
+    project.depends_on('databricks_cli')
+    project.depends_on('Jinja2')
     """Build setting"""
     project.set_property('distutils_commands', ['sdist', 'bdist_egg', 'bdist_wheel'])
     project.set_property('distutils_classifiers', ['Development Status :: 5 - Production/Stable'])

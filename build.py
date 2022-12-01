@@ -17,7 +17,7 @@ name = 'databricks-pybuilder-plugin'
 summary = 'Pybuilder plugin providing tasks for assets deployment.'
 description = 'Provides utilities for assets deployment to Databricks based on databricks API.'
 authors = [Author('Mikhail Kavaliou', 'killswitch@tut.by')]
-version = '0.0.7.dev'
+version = '0.0.7'
 
 
 @init

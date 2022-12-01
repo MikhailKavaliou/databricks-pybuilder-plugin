@@ -343,7 +343,7 @@ def deploy_job(project, logger):
         logger.info(f'Deploying a single job: {deploy_single_job}...')
 
     for job_definition in job_definitions_json:
-        job_name = job_definition.get('name')
+        job_name = job_definition.get('name') if 'name' in job_definition else job_definition.get('settings', []).get('name')
         if deploy_single_job and deploy_single_job != job_name:
             logger.info(f'Skipping the job deployment: {job_name}...')
             continue

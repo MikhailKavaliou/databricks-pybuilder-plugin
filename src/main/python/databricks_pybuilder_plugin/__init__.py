@@ -142,10 +142,10 @@ def _upload_files_to_dbfs(client, project_resources_path, dbfs_resources_path, l
     logger.info(f'\nAll the resource files have been uploaded into {dbfs_resources_path}.\n')
 
 
-@task('install_library', description='Installing a build egg archive as a dependency into a Databricks cluster.')
+@task('install_library', description='Installing a build whl archive as a dependency into a Databricks cluster.')
 def install_library(project, logger):
     """
-    This task should be run to upload the egg-archive to a cluster.
+    This task should be run to upload the whl-archive to a cluster.
     """
     logger.info('\nInstalling the library to a cluster...\n')
     if not project.name or project.name == '.':
@@ -247,7 +247,7 @@ def _detach_old_lib_from_cluster(client, cluster_id, project, logger):
     archive_name = project.name.replace('-', '_')
     for library in cluster_libraries:
         library_definition = library['library']
-        if archive_name in library_definition.get('egg', ''):
+        if archive_name in library_definition.get('whl', ''):
             logger.info(f'The library is going to be detached: {library_definition}')
             libraries_to_remove.append(library_definition)
 
@@ -260,7 +260,7 @@ def _detach_old_lib_from_cluster(client, cluster_id, project, logger):
 
 def _attach_lib_to_cluster(client, cluster_id, dbfs_library_path, logger):
     libraries = [
-        {'egg': dbfs_library_path}
+        {'whl': dbfs_library_path}
     ]
     client.install_libraries(cluster_id, libraries)
     logger.info(f'The library has been attached: {dbfs_library_path}')
@@ -289,7 +289,7 @@ def export_resources(project, logger):
 
 
 @task('deploy_to_cluster',
-      description='Deploy all the assets and install a built egg archive to the databricks cluster.')
+      description='Deploy all the assets and install a built whl archive to the databricks cluster.')
 @depends('export_workspace', 'export_resources', 'install_library')
 def deploy_to_cluster(project, logger):
     logger.info('\nAll the assets have been rolled out to a cluster.\n')

@@ -162,10 +162,10 @@ def install_library(project, logger):
     cluster_id = cluster_client.get_cluster_id_for_name(cluster_name)
     dbfs_library_path = project.get_property('dbfs_library_path')
 
-    dbfs_archive_path = _upload_egg_archive(DbfsApi(db_client),
-                                            dbfs_library_path,
-                                            project.expand_path('$dir_dist'),
-                                            logger)
+    dbfs_archive_path = _upload_archive(DbfsApi(db_client),
+                                        dbfs_library_path,
+                                        project.expand_path('$dir_dist'),
+                                        logger)
 
     libraries_client = LibrariesApi(db_client)
     _detach_old_lib_from_cluster(libraries_client, cluster_id, project, logger)
@@ -181,13 +181,14 @@ def install_library(project, logger):
     logger.info(f'\nThe library has been installed to the cluster "{cluster_name}".\n')
 
 
-def _upload_egg_archive(client, dbfs_library_path, project_dist_path, logger):
-    logger.info('Searching an .egg archive...')
+def _upload_archive(client, dbfs_library_path, project_dist_path, logger):
+    logger.info('Searching a built archive...')
     project_path = os.path.join(project_dist_path, 'dist')
 
-    egg_archive = next(os.scandir(project_path))
-    project_path = egg_archive.path
-    archive_name = egg_archive.name.replace('.', '_').replace('-', '_').replace('_egg', '.egg')
+    lib_archive = next(os.scandir(project_path))
+    project_path = lib_archive.path
+    archive_name = lib_archive.name.replace('.', '_').replace('-', '_') \
+        .replace('_egg', '.egg').replace('_whl', '.whl')
     logger.info(f'Found the dist "{project_path}".')
 
     logger.info(f'Creating remote directories: {dbfs_library_path}...')
@@ -314,10 +315,10 @@ def deploy_job(project, logger):
 
     # the lib path is pointing to dbfs for defined envs
     dbfs_library_path = project.get_property('dbfs_library_path')
-    dbfs_archive_path = _upload_egg_archive(DbfsApi(db_client),
-                                            dbfs_library_path,
-                                            project.expand_path('$dir_dist'),
-                                            logger) if env in project.get_property('attachable_lib_envs') else None
+    dbfs_archive_path = _upload_archive(DbfsApi(db_client),
+                                        dbfs_library_path,
+                                        project.expand_path('$dir_dist'),
+                                        logger) if env in project.get_property('attachable_lib_envs') else None
 
     job_definition_path = project.expand_path(project.get_property('job_definition_path'))
 

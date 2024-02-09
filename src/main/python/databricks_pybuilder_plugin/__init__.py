@@ -187,8 +187,7 @@ def _upload_archive(client, dbfs_library_path, project_dist_path, logger):
 
     lib_archive = next(os.scandir(project_path))
     project_path = lib_archive.path
-    archive_name = lib_archive.name.replace('.', '_').replace('-', '_') \
-        .replace('_egg', '.egg').replace('_whl', '.whl')
+    archive_name = lib_archive.name
     logger.info(f'Found the dist "{project_path}".')
 
     logger.info(f'Creating remote directories: {dbfs_library_path}...')
@@ -244,7 +243,7 @@ def _start_cluster(cluster_client, cluster_id, init_timeout, logger):
 def _detach_old_lib_from_cluster(client, cluster_id, project, logger):
     cluster_libraries = client.cluster_status(cluster_id).get('library_statuses', [])
     libraries_to_remove = []
-    archive_name = project.name.replace('-', '_')
+    archive_name = project.name
     for library in cluster_libraries:
         library_definition = library['library']
         if archive_name in library_definition.get('whl', ''):

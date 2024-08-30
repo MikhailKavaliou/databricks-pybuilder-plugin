@@ -5,6 +5,8 @@ import time
 import sys
 import json
 
+import boto3
+
 from pathlib import Path
 from jinja2 import Template
 
@@ -43,18 +45,27 @@ def initialize(project):
     project.set_property('env_config_name', 'env')
     project.set_property('project_resources_path', 'src/main/resources/')
     project.set_property('job_definition_path', 'src/main/databricks/job_settings.json')
-    project.set_property('dbfs_library_path', 'dbfs:/FileStore/jars')
     project.set_property('attachable_lib_envs', ['dev'])
     project.set_property('cluster_init_timeout', 5 * 60)
 
-
-@task('export_workspace', description='Uploading local files to a databricks workspace.')
-def export_workspace(project, logger):
+@task('post_init', description='Initializing some settings basing on passed init state.')
+def post_init(project, logger):
     default_env = project.get_property('default_environment')
     env = project.get_property('env', default_env).lower()
+    project.set_property('env', env)
+
+    assert_can_execute(["git", "--version"], prerequisite="git is installed.",
+                       caller="databricks-pybuilder-plugin", env=None)
+    project.set_property('branch', project.get_property('branch', get_active_branch_name()))
+
+
+@task('export_workspace', description='Uploading local files to a databricks workspace.')
+@depends('post_init')
+def export_workspace(project, logger):
+    env = project.get_property('env')
     logger.info(f'\nExporting the workspace to {env.upper()}...\n')
 
-    remote_workspace_path = _build_remote_workspace_path(project, env)
+    remote_workspace_path = _build_remote_workspace_path(project)
     project_workspace_path = project.get_property('project_workspace_path')
 
     workspace_client = WorkspaceApi(_get_databricks_client(project.get_property('databricks_credentials').get(env)))
@@ -75,21 +86,17 @@ def export_workspace(project, logger):
     logger.info('\nThe workspace has been exported.\n')
 
 
-def _build_remote_workspace_path(project, env):
+def _build_remote_workspace_path(project):
     remote_workspace_path = project.get_property('remote_workspace_path')
     if remote_workspace_path is None:
         raise Exception('The "remote_workspace_path" property is not set...\n')
 
+    branch = project.get_property('branch')
+    remote_workspace_path = remote_workspace_path.format(env=project.get_property('env')).replace('/None', '')
     if project.get_property('include_git_branch_into_output_workspace_path', False):
-        assert_can_execute(["git", "--version"], prerequisite="git is installed.",
-                           caller="databricks-pybuilder-plugin", env=None)
+        remote_workspace_path += f'/{branch}'
 
-        branch = project.get_property('branch', get_active_branch_name())
-        remote_workspace_path = remote_workspace_path.replace('/{branch}', '') + '/' + branch
-    else:
-        branch = project.get_property('branch')
-
-    return remote_workspace_path.format(env=env, branch=branch).replace('/None', '')
+    return remote_workspace_path
 
 
 def _upload_workspace_files(client, project_workspace_path, remote_workspace_path, logger):
@@ -143,6 +150,7 @@ def _upload_files_to_dbfs(client, project_resources_path, dbfs_resources_path, l
 
 
 @task('install_library', description='Installing a build whl archive as a dependency into a Databricks cluster.')
+@depends('post_init')
 def install_library(project, logger):
     """
     This task should be run to upload the whl-archive to a cluster.
@@ -155,33 +163,40 @@ def install_library(project, logger):
     if cluster_name is None:
         raise Exception('The "remote_cluster_name" property is not set...\n')
 
-    default_env = project.get_property('default_environment')
-    env = project.get_property('env', default_env).lower()
+    library_s3_path = project.get_property('attachable_lib_s3_path')
+    if library_s3_path is None:
+        raise Exception('The "attachable_lib_s3_path" property is not set...\n')
+
+    library_remote_path = project.get_property('attachable_lib_path')
+    if library_remote_path is None:
+        raise Exception('The "library_remote_path" property is not set...\n')
+
+    env = project.get_property('env')
+    branch = project.get_property('branch')
     db_client = _get_databricks_client(project.get_property('databricks_credentials').get(env))
     cluster_client = ClusterApi(db_client)
     cluster_id = cluster_client.get_cluster_id_for_name(cluster_name)
-    dbfs_library_path = project.get_property('dbfs_library_path')
 
-    dbfs_archive_path = _upload_archive(DbfsApi(db_client),
-                                        dbfs_library_path,
-                                        project.expand_path('$dir_dist'),
-                                        logger)
+    archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
+                                   project.expand_path('$dir_dist'),
+                                   logger)
+    archive_path = '/'.join([library_remote_path.format(env=env, branch=branch).rstrip('/'), archive_name])
 
     libraries_client = LibrariesApi(db_client)
     _detach_old_lib_from_cluster(libraries_client, cluster_id, project, logger)
     cluster_init_timeout = project.get_property('cluster_init_timeout')
     _start_cluster(cluster_client, cluster_id, cluster_init_timeout, logger)
-    _attach_lib_to_cluster(libraries_client, cluster_id, dbfs_archive_path, logger)
+    _attach_lib_to_cluster(libraries_client, cluster_id, archive_path, logger)
 
     if [lib for lib in libraries_client.cluster_status(cluster_id)['library_statuses'] if
-            lib['status'] == 'UNINSTALL_ON_RESTART']:
+        lib['status'] == 'UNINSTALL_ON_RESTART']:
         cluster_client.restart_cluster(cluster_id)
         logger.info(f'\nThe the cluster "{cluster_name}" is restarting...')
 
     logger.info(f'\nThe library has been installed to the cluster "{cluster_name}".\n')
 
 
-def _upload_archive(client, dbfs_library_path, project_dist_path, logger):
+def _upload_archive(library_s3_path, project_dist_path, logger):
     logger.info('Searching a built archive...')
     project_path = os.path.join(project_dist_path, 'dist')
 
@@ -190,19 +205,29 @@ def _upload_archive(client, dbfs_library_path, project_dist_path, logger):
     archive_name = lib_archive.name
     logger.info(f'Found the dist "{project_path}".')
 
-    logger.info(f'Creating remote directories: {dbfs_library_path}...')
-    client.mkdirs(DbfsPath(dbfs_library_path))
+    remote_path = library_s3_path.strip('/') if library_s3_path.endswith('/') else library_s3_path
+    remote_path = '/'.join([remote_path, archive_name])
+    logger.info(f'Uploading the file: {remote_path}...')
 
-    remote_path = '/'.join([dbfs_library_path, archive_name])
-    client.cp(
-        recursive=True,
-        overwrite=True,
-        src=project_path,
-        dst=remote_path,
-        headers=None
-    )
-    logger.info(f'The {project_path} has bean uploaded.')
-    return '/'.join([dbfs_library_path, archive_name])
+    s3_client = boto3.client('s3')
+    bucket_name = library_s3_path.split('/')[2]
+
+    prefix = library_s3_path.replace(f's3://{bucket_name}/', '')
+    s3_directory_content_list = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix).get('Contents', [])
+
+    if s3_directory_content_list:
+        for content_item in s3_directory_content_list:
+            if archive_name in content_item['Key']:
+                logger.info(f'The archive {archive_name} is already uploaded. Skipping...')
+                return archive_name
+        delete_objects = {'Objects': [{'Key': file['Key']} for file in s3_directory_content_list]}
+        s3_client.delete_objects(Bucket=bucket_name, Delete=delete_objects)
+
+    s3_client.upload_file(Filename=project_path,
+                          Bucket=bucket_name,
+                          Key=remote_path.replace(f's3://{bucket_name}/', ''))
+
+    return archive_name
 
 
 def _start_cluster(cluster_client, cluster_id, init_timeout, logger):
@@ -257,18 +282,18 @@ def _detach_old_lib_from_cluster(client, cluster_id, project, logger):
         logger.info('No libraries to detach found.')
 
 
-def _attach_lib_to_cluster(client, cluster_id, dbfs_library_path, logger):
+def _attach_lib_to_cluster(client, cluster_id, attachable_lib_path, logger):
     libraries = [
-        {'whl': dbfs_library_path}
+        {'whl': attachable_lib_path}
     ]
     client.install_libraries(cluster_id, libraries)
-    logger.info(f'The library has been attached: {dbfs_library_path}')
+    logger.info(f'The library has been attached: {attachable_lib_path}')
 
 
 @task('export_resources', description='Uploads resources into Databricks hdfs.')
+@depends('post_init')
 def export_resources(project, logger):
-    default_env = project.get_property('default_environment')
-    env = project.get_property('env', default_env).lower()
+    env = project.get_property('env')
     logger.info(f'\nExporting resources to {env.upper()}...\n')
 
     if project.get_property('with_dbfs_resources', False):
@@ -297,39 +322,37 @@ def deploy_to_cluster(project, logger):
 @task('deploy_job', description='Deploy the databricks job entirely using a job definition config.')
 @depends('export_workspace', 'export_resources')
 def deploy_job(project, logger):
-    if project.get_property('include_git_branch_into_output_workspace_path', False):
-        assert_can_execute(["git", "--version"], prerequisite="git is installed.",
-                           caller="databricks-pybuilder-plugin", env=None)
-        git_branch = get_active_branch_name()
-    else:
-        logger.info('Git branch name is disabled.')
-        git_branch = None
-
-    default_env = project.get_property('default_environment')
-    env = project.get_property('env', default_env).lower()
+    env = project.get_property('env')
+    branch = project.get_property('branch')
     logger.info(f'\nDeploying the job to {env.upper()}...\n')
+
+    library_s3_path = project.get_property('attachable_lib_s3_path')
+    if library_s3_path is None:
+        raise Exception('The "attachable_lib_s3_path" property is not set...\n')
+
+    library_remote_path = project.get_property('attachable_lib_path')
+    if library_remote_path is None:
+        raise Exception('The "library_remote_path" property is not set...\n')
 
     databricks_credentials = project.get_property('databricks_credentials').get(env)
     db_client = _get_databricks_client(databricks_credentials)
 
     # the lib path is pointing to dbfs for defined envs
-    dbfs_library_path = project.get_property('dbfs_library_path')
-    dbfs_archive_path = _upload_archive(DbfsApi(db_client),
-                                        dbfs_library_path,
-                                        project.expand_path('$dir_dist'),
-                                        logger) if env in project.get_property('attachable_lib_envs') else None
+    archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
+                                   project.expand_path('$dir_dist'),
+                                   logger) if env in project.get_property('attachable_lib_envs') else None
 
-    job_definition_path = project.expand_path(project.get_property('job_definition_path'))
+    archive_path = '/'.join([library_remote_path.format(env=env, branch=branch), archive_name]).replace('//', '/')
 
-    branch = project.get_property('branch', git_branch)
-    rendering_args = {'env': env, 'branch': branch, 'dbfs_archive_path': dbfs_archive_path,
-                      'remote_workspace_path': _build_remote_workspace_path(project, env)}
+    rendering_args = {'env': env, 'branch': branch, 'archive_path': archive_path,
+                      'remote_workspace_path': _build_remote_workspace_path(project)}
     extra_rendering_args = project.get_property('extra_rendering_args')
     if extra_rendering_args is not None and type(extra_rendering_args) == dict:
         rendering_args.update(extra_rendering_args)
     else:
         logger.info('No extra arguments for the job definition found.')
 
+    job_definition_path = project.expand_path(project.get_property('job_definition_path'))
     job_definitions = _read_job_definition(job_definition_path, rendering_args)
     job_definitions_json = json.loads(job_definitions)
     # wrap a single definition into a list for multiple definitions support

@@ -46,7 +46,9 @@ def initialize(project):
     project.set_property('project_resources_path', 'src/main/resources/')
     project.set_property('job_definition_path', 'src/main/databricks/job_settings.json')
     project.set_property('attachable_lib_envs', ['dev'])
+    project.set_property('clean_attachable_lib', False)
     project.set_property('cluster_init_timeout', 5 * 60)
+
 
 @task('post_init', description='Initializing some settings basing on passed init state.')
 def post_init(project, logger):
@@ -179,6 +181,7 @@ def install_library(project, logger):
 
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
+                                   project.get_property('clean_attachable_lib', False),
                                    logger)
     archive_path = '/'.join([library_remote_path.format(env=env, branch=branch).rstrip('/'), archive_name])
 
@@ -189,14 +192,14 @@ def install_library(project, logger):
     _attach_lib_to_cluster(libraries_client, cluster_id, archive_path, logger)
 
     if [lib for lib in libraries_client.cluster_status(cluster_id)['library_statuses'] if
-        lib['status'] == 'UNINSTALL_ON_RESTART']:
+            lib['status'] == 'UNINSTALL_ON_RESTART']:
         cluster_client.restart_cluster(cluster_id)
         logger.info(f'\nThe the cluster "{cluster_name}" is restarting...')
 
     logger.info(f'\nThe library has been installed to the cluster "{cluster_name}".\n')
 
 
-def _upload_archive(library_s3_path, project_dist_path, logger):
+def _upload_archive(library_s3_path, project_dist_path, clean_attachable_lib, logger):
     logger.info('Searching a built archive...')
     project_path = os.path.join(project_dist_path, 'dist')
 
@@ -212,16 +215,17 @@ def _upload_archive(library_s3_path, project_dist_path, logger):
     s3_client = boto3.client('s3')
     bucket_name = library_s3_path.split('/')[2]
 
-    prefix = library_s3_path.replace(f's3://{bucket_name}/', '')
-    s3_directory_content_list = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix).get('Contents', [])
+    if clean_attachable_lib:
+        prefix = library_s3_path.replace(f's3://{bucket_name}/', '')
+        s3_directory_content_list = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix).get('Contents', [])
 
-    if s3_directory_content_list:
-        for content_item in s3_directory_content_list:
-            if archive_name in content_item['Key']:
-                logger.info(f'The archive {archive_name} is already uploaded. Skipping...')
-                return archive_name
-        delete_objects = {'Objects': [{'Key': file['Key']} for file in s3_directory_content_list]}
-        s3_client.delete_objects(Bucket=bucket_name, Delete=delete_objects)
+        if s3_directory_content_list:
+            for content_item in s3_directory_content_list:
+                if archive_name in content_item['Key']:
+                    logger.info(f'The archive {archive_name} is already uploaded. Skipping...')
+                    return archive_name
+            delete_objects = {'Objects': [{'Key': file['Key']} for file in s3_directory_content_list]}
+            s3_client.delete_objects(Bucket=bucket_name, Delete=delete_objects)
 
     s3_client.upload_file(Filename=project_path,
                           Bucket=bucket_name,
@@ -340,6 +344,7 @@ def deploy_job(project, logger):
     # the lib path is pointing to dbfs for defined envs
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
+                                   project.get_property('clean_attachable_lib', False),
                                    logger) if env in project.get_property('attachable_lib_envs') else None
 
     archive_path = '/'.join([library_remote_path.format(env=env, branch=branch), archive_name]).replace('//', '/')

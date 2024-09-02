@@ -5,3 +5,5 @@
 .pybuilder
 target
 venv
+
+release.bat

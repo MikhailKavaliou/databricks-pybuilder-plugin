@@ -345,7 +345,7 @@ def deploy_job(project, logger):
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
                                    project.get_property('clean_attachable_lib', False),
-                                   logger) if env in project.get_property('attachable_lib_envs') else None
+                                   logger) if env in project.get_property('attachable_lib_envs') else 'None'
 
     archive_path = '/'.join([library_remote_path.format(env=env, branch=branch), archive_name]).replace('//', '/')
 

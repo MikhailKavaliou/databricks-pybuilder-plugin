@@ -30,6 +30,7 @@ def initialize(project):
     # runtime dependencies
     project.plugin_depends_on('databricks_cli')
     project.plugin_depends_on('Jinja2')
+    project.plugin_depends_on('boto3')
 
     """Databricks deployment settings"""
     databricks_credentials = {'dev': {'host': '', 'token': ''},
@@ -341,11 +342,16 @@ def deploy_job(project, logger):
     databricks_credentials = project.get_property('databricks_credentials').get(env)
     db_client = _get_databricks_client(databricks_credentials)
 
-    # the lib path is pointing to dbfs for defined envs
+    # the lib path is pointing to Volume for defined envs
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
                                    project.get_property('clean_attachable_lib', False),
-                                   logger) if env in project.get_property('attachable_lib_envs') else 'None'
+                                   logger) if env in project.get_property('attachable_lib_envs') else 'N/A'
+
+    if archive_name == 'N/A':
+        logger.info(f'The archive_path /{env}/{branch}/{archive_name} would be ignored.')
+    else:
+        logger.info(f'The {archive_name} file was uploaded under /{env}/{branch}/ path.')
 
     archive_path = '/'.join([library_remote_path.format(env=env, branch=branch), archive_name]).replace('//', '/')
 

@@ -183,6 +183,7 @@ def install_library(project, logger):
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
                                    project.get_property('clean_attachable_lib', False),
+                                   project.get_property('use_aws_role'),
                                    logger)
     archive_path = '/'.join([library_remote_path.format(env=env, branch=branch).rstrip('/'), archive_name])
 
@@ -200,7 +201,7 @@ def install_library(project, logger):
     logger.info(f'\nThe library has been installed to the cluster "{cluster_name}".\n')
 
 
-def _upload_archive(library_s3_path, project_dist_path, clean_attachable_lib, logger):
+def _upload_archive(library_s3_path, project_dist_path, clean_attachable_lib, aws_profile, logger):
     logger.info('Searching a built archive...')
     project_path = os.path.join(project_dist_path, 'dist')
 
@@ -213,7 +214,13 @@ def _upload_archive(library_s3_path, project_dist_path, clean_attachable_lib, lo
     remote_path = '/'.join([remote_path, archive_name])
     logger.info(f'Uploading the file: {remote_path}...')
 
-    s3_client = boto3.client('s3')
+    if aws_profile:
+        session = boto3.Session(profile_name=aws_profile)
+        s3_client = session.client('s3')
+        logger.info(f'Using {aws_profile} AWS profile...')
+    else:
+        s3_client = boto3.client('s3')
+        logger.info('Using default AWS profile...')
     bucket_name = library_s3_path.split('/')[2]
 
     if clean_attachable_lib:
@@ -346,6 +353,7 @@ def deploy_job(project, logger):
     archive_name = _upload_archive(library_s3_path.format(env=env, branch=branch),
                                    project.expand_path('$dir_dist'),
                                    project.get_property('clean_attachable_lib', False),
+                                   project.get_property('use_aws_role'),
                                    logger) if env in project.get_property('attachable_lib_envs') else 'N/A'
 
     if archive_name == 'N/A':
